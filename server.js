@@ -1,87 +1,82 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const basicAuth = require('basic-auth');
-const app = express();
-const http = require('http').Server(app);
-const io = require('socket.io')(http);
+const express = require('express')
+const bodyParser = require('body-parser')
+const basicAuth = require('basic-auth')
+const app = express()
+const http = require('http').Server(app)
+const io = require('socket.io')(http)
 require('dotenv').config()
 
 var cors = require('cors')
 app.use(cors())
 
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static('public'));
+app.use(bodyParser.json())
+app.use(bodyParser.urlencoded({ extended: true }))
+app.use(express.static('public'))
 
 // Setup the Mux SDK
-const Mux = require('@mux/mux-node');
-const { Video } = new Mux(process.env.MUX_TOKEN_ID, process.env.MUX_TOKEN_SECRET);
-let STREAM;
+const Mux = require('@mux/mux-node')
+const { Video } = new Mux(process.env.MUX_TOKEN_ID, process.env.MUX_TOKEN_SECRET)
+let STREAM
 
 // Storage Configuration
-const util = require('util');
-const fs = require('fs');
-const stateFilePath = './.data/stream';
-const readFile = util.promisify(fs.readFile);
-const writeFile = util.promisify(fs.writeFile);
+const util = require('util')
+const fs = require('fs')
+const stateFilePath = './.data/stream'
+const readFile = util.promisify(fs.readFile)
+const writeFile = util.promisify(fs.writeFile)
 
 // Authentication Configuration
 const webhookUser = {
     name: 'muxer',
     pass: 'muxology',
-};
+}
 
 // Authentication Middleware
 const auth = (req, res, next) => {
     function unauthorized(res) {
-        res.set('WWW-Authenticate', 'Basic realm=Authorization Required');
-        return res.sendStatus(401);
-    };
-    const user = basicAuth(req);
+        res.set('WWW-Authenticate', 'Basic realm=Authorization Required')
+        return res.sendStatus(401)
+    }
+    const user = basicAuth(req)
     if (!user || !user.name || !user.pass) {
-        return unauthorized(res);
-    };
+        return unauthorized(res)
+    }
     if (user.name === webhookUser.name && user.pass === webhookUser.pass) {
-        return next();
+        return next()
     } else {
-        return unauthorized(res);
-    };
-};
+        return unauthorized(res)
+    }
+}
 
-// Creates a new Live Stream so we can get a Stream Key
+// Creates a new Live Stream - get a Stream Key
 const createLiveStream = async () => {
     if (!process.env.MUX_TOKEN_ID || !process.env.MUX_TOKEN_SECRET) {
-        console.error("It looks like you haven't set up your Mux token in the .env file yet.");
-        return;
+        console.error("Mux token and/or secret not found")
+        return
     }
 
-    // Create a new Live Stream!
     return await Video.LiveStreams.create({
         playback_policy: 'public',
         reconnect_window: 10,
         new_asset_settings: { playback_policy: 'public' }
-    });
-};
-
-// Reads a state file looking for an existing Live Stream, if it can't find one, 
-// creates a new one, saving the new live stream to our state file and global
-// STREAM variable.
-const initialize = async () => {
-    try {
-        const stateFile = await readFile(stateFilePath, 'utf8');
-        STREAM = JSON.parse(stateFile);
-        console.log('Found an existing stream! Fetching updated data.');
-        STREAM = await Video.LiveStreams.get(STREAM.id);
-    } catch (err) {
-        console.log('No stream found, creating a new one.');
-        STREAM = await createLiveStream();
-        await writeFile(stateFilePath, JSON.stringify(STREAM));
-    }
-    return STREAM;
+    })
 }
 
-// Lazy way to find a public playback ID (Just returns the first...)
-const getPlaybackId = stream => stream['playback_ids'][0].id;
+const initialize = async () => {
+    try {
+        const stateFile = await readFile(stateFilePath, 'utf8')
+        STREAM = JSON.parse(stateFile)
+        console.log('Found an existing stream - Fetching updated data.')
+        STREAM = await Video.LiveStreams.get(STREAM.id)
+    } catch (err) {
+        console.log('No stream found, creating a new one.')
+        STREAM = await createLiveStream()
+        await writeFile(stateFilePath, JSON.stringify(STREAM))
+    }
+    return STREAM
+}
+
+const getPlaybackId = stream => stream['playback_ids'][0].id
 
 // Gets a trimmed public stream details from a stream for use on the client side
 const publicStreamDetails = stream => ({
@@ -90,24 +85,23 @@ const publicStreamDetails = stream => ({
     recentAssets: stream['recent_asset_ids'],
 })
 
-// API for getting the current live stream and its state for bootstrapping the app
+// API for getting the current live stream and its state
 app.get('/stream', async (req, res) => {
-    console.log(`Get Stream - Id: ${STREAM.id}`);
-    const stream = await Video.LiveStreams.get(STREAM.id);
+    const stream = await Video.LiveStreams.get(STREAM.id)
+    console.log(`Get Stream - Id: ${STREAM.id}`)
     res.json(
         publicStreamDetails(stream)
-    );
-});
+    )
+})
 
-// API which Returns the 5 most recent VOD assets made from our Live Stream
+// API which Returns the 5 most recent VOD assets made from  Live Stream
 app.get('/recent', async (req, res) => {
 
-    // console.log(`Get recent Stream/Vods - Id: ${STREAM['recent_asset_ids']}`);
-    console.log(`Get recent Vods`);
+    console.log(`Get recent Vods`)
 
-    const recentAssetIds = STREAM['recent_asset_ids'] || [];
+    const recentAssetIds = STREAM['recent_asset_ids'] || []
 
-    // For each VOD asset we know about, get the details from Mux Video
+    // For each VOD get details from Mux 
     const assets = await Promise.all(
         recentAssetIds
             .reverse()
@@ -119,62 +113,55 @@ app.get('/recent', async (req, res) => {
                         playbackId: getPlaybackId(asset),
                         status: asset.status,
                         createdAt: asset.created_at,
-                    };
+                    }
                 })
             )
-    );
-    res.json(assets);
-});
+    )
+    res.json(assets)
+})
 
 app.post('/temp', async (req, res) => {
-    console.log(`temp`);
-    res.json('temp');
-});
+    console.log(`temp`)
+    res.json('temp')
+})
 
 app.get('/', (req, res) => {
-    res.sendFile(__dirname + '/public/index.html');
-  });
+    res.sendFile(__dirname + '/public/index.html')
+  })
 
-// API which Listens for callbacks from Mux
-// app.post('/mux-hook', auth, function (req, res) {
+
 app.post('/mux-hook', function (req, res) {
-    STREAM.status = req.body.data.status;
-    console.log(`mux callback - status = ${STREAM.status}`)
+    STREAM.status = req.body.data.status
+    console.log(`mux hook - status = ${STREAM.status}`)
 
     switch (req.body.type) {
 
-        // When a stream goes idle, we want to capture the automatically created 
-        // asset IDs, so we can let people watch the on-demand copies of our live streams
+        // capture asset ID for on-demand copies of live streams
         case 'video.live_stream.idle':
-            STREAM['recent_asset_ids'] = req.body.data['recent_asset_ids'];
-        // We deliberately don't break; here
+            STREAM['recent_asset_ids'] = req.body.data['recent_asset_ids']
 
-        // When a Live Stream is active or idle, we want to push a new event down our
-        // web socket connection to our frontend, so that it update and display or hide
-        // the live stream.
+        // Live Stream active or idle - push a new event to frontend
         case 'video.live_stream.active':
-            io.emit('stream_update', publicStreamDetails(STREAM));
-            break;
+            io.emit('stream_update', publicStreamDetails(STREAM))
+            break
         default:
         // Relaxing.
     }
-    res.status(200).send('Thanks, Mux!');
-});
+    res.status(200).send('Message Received')
+})
 
 
-io.on('connection', (socket) => {
-    console.log('a user connected');
-    socket.on('disconnect', () => {
-        console.log('user disconnected');
-    });
-});
-
-// Starts the HTTP listener for our application.
-// Note: glitch helpfully remaps HTTP 80 and 443 to process.env.PORT
 initialize().then(stream => {
-    const listener = http.listen(process.env.PORT || 4000, function () {
-        console.log('Your app is listening on port ' + listener.address().port);
-        console.log('HERE ARE YOUR STREAM DETAILS, KEEP THEM SECRET!');
-        console.log(`Stream Key: ${stream.stream_key}`);
-    });
-});
+    const listener = http.listen(process.env.PORT || 3000, function () {
+        console.log('listening on port ' + listener.address().port)
+        console.log(`Stream Key: ${stream.stream_key}`)
+    })
+})
+
+
+// io.on('connection', (socket) => {
+//     console.log('a user connected')
+//     socket.on('disconnect', () => {
+//         console.log('user disconnected')
+//     })
+// })
